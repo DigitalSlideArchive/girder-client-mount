@@ -40,8 +40,10 @@ setup(
     ],
     description='Mount a girder server via fuse',
     install_requires=[
+        'cachetools',
         'fusepy',
         'girder-client',
+        'httpio',
     ],
     license='Apache Software License 2.0',
     long_description=readme,
