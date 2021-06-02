@@ -52,6 +52,9 @@ class ClientFuse(fuse.Operations):
         # to track those.
         self._defaultStat = {key: getattr(stat, key) for key in {
             'st_gid', 'st_uid', 'st_blksize'}}
+        self._blockSize = self._defaultStat.get('st_blksize')
+        if sys.platform.startswith('linux'):
+            self._blockSize = 512
         for key in {'st_atime', 'st_ctime', 'st_mtime'}:
             self._defaultStat[key] = int(getattr(stat, key, 0) * 1e9)
         self.gc = gc
@@ -237,9 +240,9 @@ class ClientFuse(fuse.Operations):
         else:
             resource = self._getPath(path)
             attr = self._stat(resource['document'], resource['model'])
-        if attr.get('st_blksize') and attr.get('st_size'):
+        if self._blockSize and attr.get('st_size'):
             attr['st_blocks'] = int(
-                (attr['st_size'] + attr['st_blksize'] - 1) / attr['st_blksize'])
+                (attr['st_size'] + self._blockSize - 1) / self._blockSize)
         return attr
 
     def read(self, path, size, offset, fh):
