@@ -317,7 +317,7 @@ class ClientFuse(fuse.Operations):
         info = {
             'path': path,
             'handle': httpio.open(self.gc.urlBase + 'file/%s/download?token=%s' % (
-                resource['document']['_id'], self.gc.token)),
+                resource['document']['_id'], self.gc.token), allow_redirects=True),
             'lock': threading.Lock(),
         }
         with self.openFilesLock:
