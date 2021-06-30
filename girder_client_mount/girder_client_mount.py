@@ -535,7 +535,7 @@ def main():
         stream=sys.stderr, level=max(1, logging.WARNING - 10 * (args.verbose - args.silent)))
     logger.debug('Parsed arguments: %r', args)
     if sys.platform.startswith('win'):
-        args.path = args.path.rstrip(':')
+        args.path = str(args.path).rstrip(':')
         if len(args.path) != 1:
             raise Exception('%s must be a drive letter' % args.path)
     elif not os.path.isdir(args.path):
