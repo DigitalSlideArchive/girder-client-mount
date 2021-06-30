@@ -416,7 +416,7 @@ def mountClient(path, gc, fuseOptions=None):
         # By default, we run in the background so the mount command returns
         # immediately.  If we run in the foreground, a SIGTERM will shut it
         # down.  On Windows, default to running in the foreground.
-        'foreground': sys.platform.startwith('win'),
+        'foreground': sys.platform.startswith('win'),
         # Cache files if their size and timestamp haven't changed.
         # This lets the OS buffer files efficiently.
         'auto_cache': True,
@@ -534,7 +534,7 @@ def main():
     logging.basicConfig(
         stream=sys.stderr, level=max(1, logging.WARNING - 10 * (args.verbose - args.silent)))
     logger.debug('Parsed arguments: %r', args)
-    if sys.platform.startwith('win'):
+    if sys.platform.startswith('win'):
         args.path = args.path.rstrip(':')
         if len(args.path) != 1:
             raise Exception('%s must be a drive letter' % args.path)
