@@ -51,7 +51,7 @@ class ClientFuse(fuse.Operations):
         # we always set st_mode, st_size, st_ino, st_nlink, so we don't need
         # to track those.
         self._defaultStat = {key: getattr(stat, key) for key in {
-            'st_gid', 'st_uid', 'st_blksize'}}
+            'st_gid', 'st_uid', 'st_blksize'} if hasattr(stat, key)}
         self._blockSize = self._defaultStat.get('st_blksize')
         if sys.platform.startswith('linux'):
             self._blockSize = 512
@@ -415,8 +415,8 @@ def mountClient(path, gc, fuseOptions=None):
     options = {
         # By default, we run in the background so the mount command returns
         # immediately.  If we run in the foreground, a SIGTERM will shut it
-        # down
-        'foreground': False,
+        # down.  On Windows, default to running in the foreground.
+        'foreground': sys.platform.startwith('win'),
         # Cache files if their size and timestamp haven't changed.
         # This lets the OS buffer files efficiently.
         'auto_cache': True,
@@ -476,7 +476,10 @@ def get_girder_client(opts):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Generate a bounding polygon for a nitf file.')
+        description='Mount Girder resources as a user file system.  This '
+        'requires the fuse library to be installed.  If needed, set the '
+        'FUSE_LIBRARY_PATH environment variable to point to libfuse or a '
+        'compatible library.')
     # Standard girder_client CLI options
     parser.add_argument(
         '--apiurl', '--api-url', '--api', '--url', '-a', dest='apiUrl',
@@ -531,7 +534,11 @@ def main():
     logging.basicConfig(
         stream=sys.stderr, level=max(1, logging.WARNING - 10 * (args.verbose - args.silent)))
     logger.debug('Parsed arguments: %r', args)
-    if not os.path.isdir(args.path):
+    if sys.platform.startwith('win'):
+        args.path = args.path.rstrip(':')
+        if len(args.path) != 1:
+            raise Exception('%s must be a drive letter' % args.path)
+    elif not os.path.isdir(args.path):
         raise Exception('%s must be a directory' % args.path)
     if args.unmount or args.lazy:
         result = unmountClient(args.path, args.lazy)
