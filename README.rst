@@ -19,3 +19,8 @@ Example Usage
 Create a mount directory (e.g., ``mkdir /mnt/remote_girder``), then mount it via ::
 
     girder-client-mount /mnt/remote_girder --username= --password= --apiurl=https://data.kitware.com/api/v1
+
+On Windows, specify an available drive letter for the mount.  You probably will need to also set an environment variable to point to a libfuse compatible dll. ::
+    set FUSE_LIBRARY_PATH=c:\Program Files\Dokan\DokanLibrary-1.5.0\dokanfuse1.dll
+    girder-client-mount A --username= --password= --apiurl=https://data.kitware.com/api/v1
+
