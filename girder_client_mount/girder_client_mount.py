@@ -98,6 +98,8 @@ class ClientFuse(fuse.Operations):
         :param path: path within the fuse.
         :returns: a Girder resource dictionary.
         """
+        if path.endswith('/*'):
+            path = path[:-1]
         # If asked about a file in top level directory or the top directory,
         # return that it doesn't exist.  Other methods should handle '',
         # '/user', and 'collection' before calling this method.
@@ -308,8 +310,9 @@ class ClientFuse(fuse.Operations):
         resource = self._getPath(path)
         if resource['model'] != 'file':
             return super().open(path, flags)
-        if flags & (os.O_APPEND | os.O_ASYNC | os.O_CREAT | os.O_DIRECTORY |
-                    os.O_EXCL | os.O_RDWR | os.O_TRUNC | os.O_WRONLY):
+        if flags & (os.O_APPEND | os.O_CREAT | os.O_EXCL | os.O_RDWR |
+                    os.O_TRUNC | os.O_WRONLY | getattr(os, 'O_ASYNC', 0) |
+                    getattr(os, 'O_DIRECTORY', 0)):
             raise fuse.FuseOSError(errno.EROFS)
         info = {
             'path': path,
