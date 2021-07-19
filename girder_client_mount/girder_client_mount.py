@@ -33,7 +33,7 @@ class ClientFuse(fuse.Operations):
 
     use_ns = True
 
-    def __init__(self, stat=None, gc=None):
+    def __init__(self, stat=None, gc=None, flatten=None):
         """
         Instantiate the operations class.  This sets up tracking for open
         files and file descriptor numbers (handles).
@@ -44,6 +44,8 @@ class ClientFuse(fuse.Operations):
             updated and a created time stamp, the ctime and mtime will also be
             taken from this.  If None, this defaults to the user directory.
         :param gc: a connected girder client.
+        :param flatten: if True, make single-file items appear as a file rather
+            than a folder containing one file.
         """
         super().__init__()
         if not stat:
@@ -58,6 +60,7 @@ class ClientFuse(fuse.Operations):
         for key in {'st_atime', 'st_ctime', 'st_mtime'}:
             self._defaultStat[key] = int(getattr(stat, key, 0) * 1e9)
         self.gc = gc
+        self.flatten = flatten
         self.nextFH = 1
         self.openFiles = {}
         self.openFilesLock = threading.Lock()
@@ -137,6 +140,10 @@ class ClientFuse(fuse.Operations):
                 doc['created']).timetuple()) * 1e9)
         attr['st_ctime'] = attr['st_mtime']
 
+        if model == 'item' and self.flatten:
+            files = list(self.gc.listFile(doc['_id'], limit=2))
+            if len(files) == 1 and files[0]['name'] == doc['name']:
+                doc, model = files[0], 'file'
         if model == 'file':
             attr['st_mode'] = 0o400 | stat.S_IFREG
             attr['st_size'] = doc.get('size', len(doc.get('linkUrl', '')))
@@ -308,6 +315,10 @@ class ClientFuse(fuse.Operations):
         :returns: a file descriptor.
         """
         resource = self._getPath(path)
+        if resource['model'] == 'item' and self.flatten:
+            files = list(self.gc.listFile(resource['document']['_id'], limit=2))
+            if len(files) == 1 and files[0]['name'] == resource['document']['name']:
+                resource = {'document': files[0], 'model': files[0]['_modelType']}
         if resource['model'] != 'file':
             return super().open(path, flags)
         if flags & (os.O_APPEND | os.O_CREAT | os.O_EXCL | os.O_RDWR |
@@ -402,7 +413,7 @@ def unmountClient(path, lazy=False, quiet=False):
     return result
 
 
-def mountClient(path, gc, fuseOptions=None):
+def mountClient(path, gc, fuseOptions=None, flatten=False):
     """
     Perform the mount.
 
@@ -412,9 +423,11 @@ def mountClient(path, gc, fuseOptions=None):
         mount.  A key without a value is taken as True.  Boolean values are
         case insensitive.  For instance, 'foreground' or 'foreground=True' will
         keep this program running until the SIGTERM or unmounted.
+    :param flatten: if True, make single-file items appear as a file rather
+        than a folder containing one file.
     """
     path = str(path)
-    opClass = ClientFuse(stat=os.stat(path), gc=gc)
+    opClass = ClientFuse(stat=os.stat(path), gc=gc, flatten=flatten)
     options = {
         # By default, we run in the background so the mount command returns
         # immediately.  If we run in the foreground, a SIGTERM will shut it
@@ -533,6 +546,10 @@ def main():
     parser.add_argument(
         '--lazy', '-l', '-z', action='store_true', default=False,
         help='Lazy unmount.')
+    parser.add_argument(
+        '--flatten', '-f', action='store_true', default=False,
+        help='Flatten single file items so that the item does not appear as a '
+        'directory.')
     args = parser.parse_args()
     logging.basicConfig(
         stream=sys.stderr, level=max(1, logging.WARNING - 10 * (args.verbose - args.silent)))
@@ -547,7 +564,7 @@ def main():
         result = unmountClient(args.path, args.lazy)
         sys.exit(result)
     gc = get_girder_client(vars(args))
-    mountClient(path=args.path, gc=gc, fuseOptions=args.fuseOptions)
+    mountClient(path=args.path, gc=gc, fuseOptions=args.fuseOptions, flatten=args.flatten)
 
 
 if __name__ == '__main__':
