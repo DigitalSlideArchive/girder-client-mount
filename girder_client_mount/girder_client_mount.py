@@ -9,6 +9,7 @@ import httpio
 import logging
 import os
 import pathlib
+from pkg_resources import DistributionNotFound, get_distribution
 import requests
 import stat
 import sys
@@ -18,6 +19,12 @@ import time
 import girder_client
 import girder_client.cli
 
+
+try:
+    __version__ = get_distribution(__name__.split('.')[0]).version
+except DistributionNotFound:
+    # package is not installed
+    __version__ = 'local'
 
 logger = logging.getLogger(__name__)
 
@@ -550,6 +557,9 @@ def main():
         '--flatten', '-f', action='store_true', default=False,
         help='Flatten single file items so that the item does not appear as a '
         'directory.')
+    parser.add_argument(
+        '--version', '-V', action='version',
+        version='%(prog)s {version}'.format(version=__version__))
     args = parser.parse_args()
     logging.basicConfig(
         stream=sys.stderr, level=max(1, logging.WARNING - 10 * (args.verbose - args.silent)))
