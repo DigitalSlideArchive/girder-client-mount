@@ -1,24 +1,23 @@
 #!/usr/bin/env python3
 import argparse
-import cachetools
-import dateutil.parser
 import errno
 import functools
-import fuse
-import httpio
 import logging
 import os
 import pathlib
-from pkg_resources import DistributionNotFound, get_distribution
-import requests
 import stat
 import sys
 import threading
 import time
 
+import cachetools
+import dateutil.parser
+import fuse
 import girder_client
 import girder_client.cli
-
+import httpio
+import requests
+from pkg_resources import DistributionNotFound, get_distribution
 
 try:
     __version__ = get_distribution(__name__.split('.')[0]).version
@@ -34,16 +33,20 @@ logging.getLogger(__name__).addHandler(logging.NullHandler())
 
 class ClientFuse(fuse.Operations):
     """
-    This class handles FUSE operations that are non-default.  It exposes the
-    Girder resources via the resource path in a read-only manner.
+    Handle FUSE operations that are non-default.
+
+    It exposes the Girder resources via the resource path in a read-only
+    manner.
     """
 
     use_ns = True
 
     def __init__(self, stat=None, gc=None, flatten=None):
         """
-        Instantiate the operations class.  This sets up tracking for open
-        files and file descriptor numbers (handles).
+        Instantiate the operations class.
+
+        This sets up tracking for open files and file descriptor numbers
+        (handles).
 
         :param stat: the results of an os.stat call which should be used as
             default values for files in the FUSE.  Files in the FUSE will have
@@ -100,8 +103,8 @@ class ClientFuse(fuse.Operations):
                 logger.debug('<- %s (length %d) %r', op, len(ret), ret[:16])
 
     @cachetools.cachedmethod(lambda self: self.cache, key=functools.partial(
-        cachetools.keys.hashkey, '_getPath'))
-    def _getPath(self, path):
+        cachetools.keys.hashkey, '_get_path'))
+    def _get_path(self, path):
         """
         Given a fuse path, return the associated resource.
 
@@ -208,9 +211,10 @@ class ClientFuse(fuse.Operations):
 
     def access(self, path, mode):
         """
-        Try to load the resource associated with a path.  If we have permission
-        to do so based on the current mode, report that access is allowed.
-        Otherwise, an exception is raised.
+        Try to load the resource associated with a path.
+
+        If we have permission to do so based on the current mode, report that
+        access is allowed.  Otherwise, an exception is raised.
 
         :param path: path within the fuse.
         :param mode: either F_OK to test if the resource exists, or a bitfield
@@ -226,12 +230,14 @@ class ClientFuse(fuse.Operations):
 
     def create(self, path, mode):
         """
-        This is a read-only system, so don't allow create.
+        In a read-only system, don't allow create.
         """
         raise fuse.FuseOSError(errno.EROFS)
 
     def flush(self, path, fh=None):
         """
+        Flush writes.
+
         We may want to disallow flush, since this is a read-only system:
             raise fuse.FuseOSError(errno.EACCES)
         For now, always succeed.
@@ -254,7 +260,7 @@ class ClientFuse(fuse.Operations):
             attr['st_mode'] = 0o500 | stat.S_IFDIR
             attr['st_size'] = 0
         else:
-            resource = self._getPath(path)
+            resource = self._get_path(path)
             attr = self._stat(resource['document'], resource['model'])
         if self._blockSize and attr.get('st_size'):
             attr['st_blocks'] = int(
@@ -308,7 +314,7 @@ class ClientFuse(fuse.Operations):
             except Exception:
                 pass
         else:
-            resource = self._getPath(path)
+            resource = self._get_path(path)
             result.extend(self._list(resource['document'], resource['model']))
         return result
 
@@ -321,7 +327,7 @@ class ClientFuse(fuse.Operations):
             read only.
         :returns: a file descriptor.
         """
-        resource = self._getPath(path)
+        resource = self._get_path(path)
         if resource['model'] == 'item' and self.flatten:
             files = list(self.gc.listFile(resource['document']['_id'], limit=2))
             if len(files) == 1 and files[0]['name'] == resource['document']['name']:
@@ -375,8 +381,9 @@ class ClientFuse(fuse.Operations):
 class FUSELogError(fuse.FUSE):
     def __init__(self, operations, mountpoint, *args, **kwargs):
         """
-        This wraps fuse.FUSE so that errors are logged rather than raising a
-        RuntimeError exception.
+        Wrap fuse.FUSE so that errors are logged.
+
+        Don't raise a RuntimeError exception.
         """
         try:
             logger.debug('Mounting %s\n' % mountpoint)
@@ -390,7 +397,7 @@ class FUSELogError(fuse.FUSE):
                     mountpoint, ))
 
 
-def unmountClient(path, lazy=False, quiet=False):
+def unmount_client(path, lazy=False, quiet=False):
     """
     Unmount a specified path, if possible.
 
@@ -420,21 +427,21 @@ def unmountClient(path, lazy=False, quiet=False):
     return result
 
 
-def mountClient(path, gc, fuseOptions=None, flatten=False):
+def mount_client(path, gc, fuse_options=None, flatten=False):
     """
     Perform the mount.
 
     :param path: the mount location.
     :param gc: a connected girder client.
-    :param fuseOptions: a comma-separated string of options to pass to the FUSE
-        mount.  A key without a value is taken as True.  Boolean values are
-        case insensitive.  For instance, 'foreground' or 'foreground=True' will
-        keep this program running until the SIGTERM or unmounted.
+    :param fuse_options: a comma-separated string of options to pass to the
+        FUSE mount.  A key without a value is taken as True.  Boolean values
+        are case insensitive.  For instance, 'foreground' or 'foreground=True'
+        will keep this program running until the SIGTERM or unmounted.
     :param flatten: if True, make single-file items appear as a file rather
         than a folder containing one file.
     """
     path = str(path)
-    opClass = ClientFuse(stat=os.stat(path), gc=gc, flatten=flatten)
+    op_class = ClientFuse(stat=os.stat(path), gc=gc, flatten=flatten)
     options = {
         # By default, we run in the background so the mount command returns
         # immediately.  If we run in the foreground, a SIGTERM will shut it
@@ -451,8 +458,8 @@ def mountClient(path, gc, fuseOptions=None, flatten=False):
     if sys.platform != 'darwin':
         # Automatically unmount when we try to mount again
         options['auto_unmount'] = True
-    if fuseOptions:
-        for opt in fuseOptions.split(','):
+    if fuse_options:
+        for opt in fuse_options.split(','):
             if '=' in opt:
                 key, value = opt.split('=', 1)
                 value = (False if value.lower() == 'false' else
@@ -463,20 +470,22 @@ def mountClient(path, gc, fuseOptions=None, flatten=False):
                 logger.warning('Ignoring the %s=%r option' % (key, value))
                 continue
             options[key] = value
-    FUSELogError(opClass, path, **options)
+    FUSELogError(op_class, path, **options)
 
 
 class GirderClient(girder_client.cli.GirderCli):
     def __init__(self, *args, **kwargs):
         """
-        See girder_client.cli.  This does the same, except maintains a single
-        requests session for the whole duration.
+        See girder_client.cli.
+
+        This does the same, except maintains a single requests session for the
+        whole duration.
         """
         super().__init__(*args, **kwargs)
         self._session = requests.Session()
         self._session.verify = self.sslVerify
 
-    def sendRestRequest(self, *args, **kwargs):
+    def sendRestRequest(self, *args, **kwargs):  # noqa: N802
         return girder_client.GirderClient.sendRestRequest(self, *args, **kwargs)
 
 
@@ -497,7 +506,7 @@ def get_girder_client(opts):
     return GirderClient(**gcopts)
 
 
-def main():
+def main(args=None):
     parser = argparse.ArgumentParser(
         description='Mount Girder resources as a user file system.  This '
         'requires the fuse library to be installed.  If needed, set the '
@@ -560,7 +569,7 @@ def main():
     parser.add_argument(
         '--version', '-V', action='version',
         version='%(prog)s {version}'.format(version=__version__))
-    args = parser.parse_args()
+    args = parser.parse_args(args)
     logging.basicConfig(
         stream=sys.stderr, level=max(1, logging.WARNING - 10 * (args.verbose - args.silent)))
     logger.debug('Parsed arguments: %r', args)
@@ -571,10 +580,10 @@ def main():
     elif not os.path.isdir(args.path):
         raise Exception('%s must be a directory' % args.path)
     if args.unmount or args.lazy:
-        result = unmountClient(args.path, args.lazy)
+        result = unmount_client(args.path, args.lazy)
         sys.exit(result)
     gc = get_girder_client(vars(args))
-    mountClient(path=args.path, gc=gc, fuseOptions=args.fuseOptions, flatten=args.flatten)
+    mount_client(path=args.path, gc=gc, fuse_options=args.fuseOptions, flatten=args.flatten)
 
 
 if __name__ == '__main__':

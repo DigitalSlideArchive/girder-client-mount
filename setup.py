@@ -1,5 +1,6 @@
 import os
-from setuptools import setup, find_packages
+
+from setuptools import find_packages, setup
 
 with open('README.rst') as readme_file:
     readme = readme_file.read()
@@ -44,6 +45,7 @@ setup(
         'fusepy',
         'girder-client',
         'httpio',
+        'python-dateutil',
     ],
     license='Apache Software License 2.0',
     long_description=readme,
