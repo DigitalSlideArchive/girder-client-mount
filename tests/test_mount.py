@@ -25,16 +25,16 @@ def mount_client(tmp_path, request):
     mount_options = request.node.get_closest_marker('mount_options')
     mount_options = mount_options.args[0] if mount_options else {}
     kwargs.update(mount_options)
-    mountThread = threading.Thread(
+    mount_thread = threading.Thread(
         target=girder_client_mount.mount_client, args=(tmp_path, ), kwargs=kwargs)
-    mountThread.daemon = True
-    mountThread.start()
+    mount_thread.daemon = True
+    mount_thread.start()
     starttime = time.time()
     while time.time() - starttime < 30 and not os.path.exists(tmp_path / 'user'):
         time.sleep(0.05)
     yield tmp_path
     girder_client_mount.unmount_client(tmp_path)
-    mountThread.join()
+    mount_thread.join()
 
 
 def test_mount(mount_client):

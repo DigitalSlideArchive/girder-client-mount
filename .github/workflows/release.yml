@@ -1,7 +1,11 @@
 name: release
 on:
-  release:
-    types: [published]
+  workflow_run:
+    workflows:
+      - test
+    release:
+      types:
+        - created
 jobs:
   publish:
     runs-on: ubuntu-latest
