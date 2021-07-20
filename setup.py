@@ -1,5 +1,4 @@
 import os
-import sys  # ##DWM::
 
 from setuptools import find_packages, setup
 
@@ -18,7 +17,6 @@ def prerelease_local_scheme(version):
     """
     from setuptools_scm.version import get_local_node_and_date
 
-    sys.stderr.write('HERE: %r\n' % [os.getenv('GITHUB_REF')])  # ##DWM::
     if os.getenv('GITHUB_REF') == 'refs/heads/main':
         return ''
     else:
