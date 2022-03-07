@@ -78,6 +78,7 @@ class ClientFuse(fuse.Operations):
         self.nextFH = 1
         self.openFiles = {}
         self.openFilesLock = threading.Lock()
+        options = options or {}
         self.cache = cachetools.TTLCache(maxsize=10000, ttl=int(options.pop('stat_cache_ttl', 1)))
         self.diskcache = None
         self._configure_disk_cache(options)
@@ -178,7 +179,7 @@ class ClientFuse(fuse.Operations):
         # str(doc['_id'])).hexdigest()[-8:], 16) ).  There doesn't seem to be
         # any measurable benefit of this, however, so we specify use_ino false
         # in the mount and set the value to -1 here.
-        attr['st_ino'] = -1
+        # attr['st_ino'] = -1
         attr['st_ino'] = int(hashlib.sha512(str(doc['_id']).encode()).hexdigest()[-8:], 16)
 
         attr['st_nlink'] = 1
