@@ -5,4 +5,4 @@ include setup.py
 graft girder_client_mount
 graft docs
 prune tests
-global-exclude *.py[co] __pycache__ 
+global-exclude *.py[co] __pycache__
