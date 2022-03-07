@@ -2,6 +2,7 @@
 import argparse
 import errno
 import functools
+import hashlib
 import logging
 import os
 import pathlib
@@ -41,7 +42,7 @@ class ClientFuse(fuse.Operations):
 
     use_ns = True
 
-    def __init__(self, stat=None, gc=None, flatten=None):
+    def __init__(self, stat=None, gc=None, flatten=None, options=None):
         """
         Instantiate the operations class.
 
@@ -56,6 +57,9 @@ class ClientFuse(fuse.Operations):
         :param gc: a connected girder client.
         :param flatten: if True, make single-file items appear as a file rather
             than a folder containing one file.
+        :param options: a dictionary of additional options.  May be modified if
+            some options are directly handled rather than are to be passed to
+            the mount command.
         """
         super().__init__()
         if not stat:
@@ -74,7 +78,41 @@ class ClientFuse(fuse.Operations):
         self.nextFH = 1
         self.openFiles = {}
         self.openFilesLock = threading.Lock()
-        self.cache = cachetools.TTLCache(maxsize=10000, ttl=1)
+        self.cache = cachetools.TTLCache(maxsize=10000, ttl=int(options.pop('stat_cache_ttl', 1)))
+        self.diskcache = None
+        self._configure_disk_cache(options)
+
+    def _configure_disk_cache(self, cacheopts):
+        """
+        Configure the disk cache.
+
+        :param cacheopts: An optional dictionary of options.  Any option that
+            starts with 'diskcache' will be passed to diskcache.Cache without
+            the 'diskcache' prefix.  'diskcache' by itself is a boolean to
+            enable or disable the diskcache.
+        """
+        import diskcache
+
+        options = {
+            'directory': '~/.cache/girder-client-mount',
+            'eviction_policy': 'least-recently-used',
+            # This is necessary to allow concurrent access from multiple mounts
+            'sqlite_journal_mode': 'wal2',
+        }
+        skip = False
+        for key in list((cacheopts or {}).keys()):
+            if key.startswith('diskcache'):
+                value = cacheopts.pop(key)
+                key = key[len('diskcache'):].lstrip('_')
+                if key:
+                    options[key] = value
+                elif not value:
+                    skip = True
+        if not skip:
+            self.diskcache = {
+                'chunk': 128 * 1024,
+                'cache': diskcache.Cache(**options)
+            }
 
     def __call__(self, op, path, *args, **kwargs):
         """
@@ -141,6 +179,8 @@ class ClientFuse(fuse.Operations):
         # any measurable benefit of this, however, so we specify use_ino false
         # in the mount and set the value to -1 here.
         attr['st_ino'] = -1
+        attr['st_ino'] = int(hashlib.sha512(str(doc['_id']).encode()).hexdigest()[-8:], 16)
+
         attr['st_nlink'] = 1
         if 'updated' in doc:
             attr['st_mtime'] = int(time.mktime(dateutil.parser.parse(
@@ -283,7 +323,30 @@ class ClientFuse(fuse.Operations):
             if fh not in self.openFiles:
                 raise fuse.FuseOSError(errno.EBADF)
             info = self.openFiles[fh]
+        if self.diskcache:
+            result = b''
+            for idx in range(
+                    offset // self.diskcache['chunk'],
+                    (offset + size + self.diskcache['chunk'] - 1) // self.diskcache['chunk']):
+                idxoffset = idx * self.diskcache['chunk']
+                idxlen = min(self.diskcache['chunk'], info['size'] - idxoffset)
+                key = '%s-%d-%d' % (info['hash'], idxoffset, idxlen)
+                data = self.diskcache['cache'].get(key, None)
+                if data is None:
+                    with info['lock']:
+                        if 'handle' not in info:
+                            info['handle'] = httpio.open(info['url'], allow_redirects=True)
+                        handle = info['handle']
+                        handle.seek(idxoffset)
+                        data = handle.read(idxlen)
+                        self.diskcache['cache'][key] = data
+
+                result += data[max(0, offset - idxoffset):
+                               min(len(data), offset + size - idxoffset)]
+            return result
         with info['lock']:
+            if 'handle' not in info:
+                info['handle'] = httpio.open(info['url'], allow_redirects=True)
             handle = info['handle']
             handle.seek(offset)
             return handle.read(size)
@@ -340,8 +403,15 @@ class ClientFuse(fuse.Operations):
             raise fuse.FuseOSError(errno.EROFS)
         info = {
             'path': path,
-            'handle': httpio.open(self.gc.urlBase + 'file/%s/download?token=%s' % (
-                resource['document']['_id'], self.gc.token), allow_redirects=True),
+            'url': self.gc.urlBase + 'file/%s/download?token=%s' % (
+                resource['document']['_id'], self.gc.token),
+            'hash': (
+                resource['document']['sha512']
+                if 'sha512' in resource['document'] else
+                '%s-%d-%s' % (
+                    resource['document']['_id'], resource['document']['size'],
+                    resource['document'].get('updated', resource['document']['created']))),
+            'size': resource['document']['size'],
             'lock': threading.Lock(),
         }
         with self.openFilesLock:
@@ -441,7 +511,6 @@ def mount_client(path, gc, fuse_options=None, flatten=False):
         than a folder containing one file.
     """
     path = str(path)
-    op_class = ClientFuse(stat=os.stat(path), gc=gc, flatten=flatten)
     options = {
         # By default, we run in the background so the mount command returns
         # immediately.  If we run in the foreground, a SIGTERM will shut it
@@ -451,7 +520,7 @@ def mount_client(path, gc, fuse_options=None, flatten=False):
         # This lets the OS buffer files efficiently.
         'auto_cache': True,
         # We aren't specifying our own inos
-        'use_ino': False,
+        # 'use_ino': False,
         # read-only file system
         'ro': True,
     }
@@ -466,10 +535,12 @@ def mount_client(path, gc, fuse_options=None, flatten=False):
                          True if value.lower() == 'true' else value)
             else:
                 key, value = opt, True
-            if key in ('use_ino', 'ro', 'rw') and options.get(key) != value:
+            if key in ('ro', 'rw') and options.get(key) != value:
                 logger.warning('Ignoring the %s=%r option' % (key, value))
                 continue
             options[key] = value
+    flatten = options.pop('flatten', flatten)
+    op_class = ClientFuse(stat=os.stat(path), gc=gc, flatten=flatten, options=options)
     FUSELogError(op_class, path, **options)
 
 
@@ -554,8 +625,18 @@ def main(args=None):
     parser.add_argument('path', type=pathlib.Path)
     parser.add_argument(
         '--options', '-o', dest='fuseOptions',
-        help='Comma separated list of additional FUSE mount options.  ro and '
-        'use_ino cannot be overridden.')
+        help='Comma separated list of additional FUSE mount options.  ro '
+        'cannot be overridden.  Some additional options can be specified: '
+        'flatten can be specified here rather than as a separate flag.  '
+        'Options beginning with diskcache are used to create a diskcache for '
+        'somewhat persistent local data storage.  These are passed to '
+        'diskcache.Cache with the "diskcache" prefix removed.  diskcache by '
+        'itself will enable the default diskcache.  diskcache_directory and '
+        'diskcache_size_limit (in bytes) are the most common.  The directory '
+        'defaults to ~/.cache/girder-client-mount.  stat_cache_ttl specifies '
+        'how long in seconds attributes are cached for girder documents.  A '
+        'longer time reduces network access but could result is stale '
+        'permissions or miss updates.')
     parser.add_argument(
         '--unmount', '--umount', '-u', action='store_true', default=False,
         help='Unmount a mounted FUSE filesystem.')

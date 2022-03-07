@@ -47,6 +47,9 @@ setup(
         'httpio',
         'python-dateutil',
     ],
+    extras_require={
+        'diskcache': ['diskcache'],
+    },
     license='Apache Software License 2.0',
     long_description=readme,
     long_description_content_type='text/x-rst',
