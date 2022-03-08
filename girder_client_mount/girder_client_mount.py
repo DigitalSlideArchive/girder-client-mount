@@ -100,9 +100,13 @@ class ClientFuse(fuse.Operations):
 
         options = {
             'directory': '~/.cache/girder-client-mount',
-            'eviction_policy': 'least-recently-used',
-            # This is necessary to allow concurrent access from multiple mounts
-            'sqlite_journal_mode': 'wal2',
+            # It would be nicer to use 'least-recently-used', but it is
+            # comparatively expensive, as every access requires a database
+            # write.  least-recently-stored does not.
+            'eviction_policy': 'least-recently-stored',
+            # This seems to be necessary to allow concurrent access from
+            # multiple mounts
+            'sqlite_journal_mode': 'truncate',
         }
         for key in list((cacheopts or {}).keys()):
             if key.startswith('diskcache'):
@@ -114,8 +118,9 @@ class ClientFuse(fuse.Operations):
                 elif not value:
                     use = False
         if use:
+            chunk = int(options.pop('chunk', 128 * 1024))
             self.diskcache = {
-                'chunk': 128 * 1024,
+                'chunk': chunk,
                 'cache': diskcache.Cache(**options)
             }
 
@@ -336,7 +341,7 @@ class ClientFuse(fuse.Operations):
                 idxoffset = idx * self.diskcache['chunk']
                 idxlen = min(self.diskcache['chunk'], info['size'] - idxoffset)
                 key = '%s-%d-%d' % (info['hash'], idxoffset, idxlen)
-                data = self.diskcache['cache'].get(key, None)
+                data = self.diskcache['cache'].get(key, None, read=True)
                 if data is None:
                     with info['lock']:
                         if 'handle' not in info:
@@ -344,10 +349,12 @@ class ClientFuse(fuse.Operations):
                         handle = info['handle']
                         handle.seek(idxoffset)
                         data = handle.read(idxlen)
-                        self.diskcache['cache'][key] = data
-
-                result += data[max(0, offset - idxoffset):
-                               min(len(data), offset + size - idxoffset)]
+                    self.diskcache['cache'][key] = data
+                    result += data[max(0, offset - idxoffset):
+                                   min(len(data), offset + size - idxoffset)]
+                else:
+                    data.seek(max(0, offset - idxoffset))
+                    result += data.read(size - len(result))
             return result
         with info['lock']:
             if 'handle' not in info:
