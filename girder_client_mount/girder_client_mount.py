@@ -92,7 +92,11 @@ class ClientFuse(fuse.Operations):
             the 'diskcache' prefix.  'diskcache' by itself is a boolean to
             enable or disable the diskcache.
         """
-        import diskcache
+        use = None
+        try:
+            import diskcache
+        except ImportError:
+            use = False
 
         options = {
             'directory': '~/.cache/girder-client-mount',
@@ -100,16 +104,16 @@ class ClientFuse(fuse.Operations):
             # This is necessary to allow concurrent access from multiple mounts
             'sqlite_journal_mode': 'wal2',
         }
-        skip = False
         for key in list((cacheopts or {}).keys()):
             if key.startswith('diskcache'):
                 value = cacheopts.pop(key)
                 key = key[len('diskcache'):].lstrip('_')
+                use = True if use is None else use
                 if key:
                     options[key] = value
                 elif not value:
-                    skip = True
-        if not skip:
+                    use = False
+        if use:
             self.diskcache = {
                 'chunk': 128 * 1024,
                 'cache': diskcache.Cache(**options)
