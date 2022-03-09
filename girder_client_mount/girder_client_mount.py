@@ -341,7 +341,11 @@ class ClientFuse(fuse.Operations):
                 idxoffset = idx * self.diskcache['chunk']
                 idxlen = min(self.diskcache['chunk'], info['size'] - idxoffset)
                 key = '%s-%d-%d' % (info['hash'], idxoffset, idxlen)
-                data = self.diskcache['cache'].get(key, None, read=True)
+                try:
+                    data = self.diskcache['cache'].get(key, None, read=True)
+                except Exception:
+                    logger.exception('diskcache threw an exception in get')
+                    data = None
                 if data is None:
                     with info['lock']:
                         if 'handle' not in info:
@@ -349,7 +353,10 @@ class ClientFuse(fuse.Operations):
                         handle = info['handle']
                         handle.seek(idxoffset)
                         data = handle.read(idxlen)
-                    self.diskcache['cache'][key] = data
+                    try:
+                        self.diskcache['cache'][key] = data
+                    except Exception:
+                        logger.exception('diskcache threw an exception in set')
                     result += data[max(0, offset - idxoffset):
                                    min(len(data), offset + size - idxoffset)]
                 else:
