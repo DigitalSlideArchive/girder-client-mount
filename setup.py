@@ -42,14 +42,12 @@ setup(
     description='Mount a girder server via fuse',
     install_requires=[
         'cachetools',
+        'diskcache',
         'fusepy',
         'girder-client',
         'httpio',
         'python-dateutil',
     ],
-    extras_require={
-        'diskcache': ['diskcache'],
-    },
     license='Apache Software License 2.0',
     long_description=readme,
     long_description_content_type='text/x-rst',
