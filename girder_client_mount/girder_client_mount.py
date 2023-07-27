@@ -79,6 +79,7 @@ class ClientFuse(fuse.Operations):
         self.openFiles = {}
         self.openFilesLock = threading.Lock()
         options = options or {}
+        self._allow_other = 'allow_other' in options
         self.cache = cachetools.TTLCache(maxsize=10000, ttl=int(options.pop('stat_cache_ttl', 1)))
         self.diskcache = None
         self._configure_disk_cache(options)
@@ -205,10 +206,14 @@ class ClientFuse(fuse.Operations):
             if len(files) == 1 and files[0]['name'] == doc['name']:
                 doc, model = files[0], 'file'
         if model == 'file':
-            attr['st_mode'] = 0o400 | stat.S_IFREG
-            attr['st_size'] = doc.get('size', len(doc.get('linkUrl', '')))
+            attr['st_mode'] = (0o444 if self._allow_other else 0o400) | stat.S_IFREG
+            attr['st_size'] = doc.get('size', 0)
+            if 'size' not in doc and 'linkUrl' in doc:
+                with httpio.open(doc['linkUrl']) as f:
+                    f.seek(0, os.SEEK_END)
+                    attr['st_size'] = f.tell()
         else:
-            attr['st_mode'] = 0o500 | stat.S_IFDIR
+            attr['st_mode'] = (0o555 if self._allow_other else 0o500) | stat.S_IFDIR
             # Directories have zero size.  We could, instead, list the size
             # of all of their children via doc.get('size', 0), but that isn't
             # how most directories are reported.
@@ -307,7 +312,7 @@ class ClientFuse(fuse.Operations):
         """
         if path.rstrip('/') in ('', '/user', '/collection'):
             attr = self._defaultStat.copy()
-            attr['st_mode'] = 0o500 | stat.S_IFDIR
+            attr['st_mode'] = (0o555 if self._allow_other else 0o500) | stat.S_IFDIR
             attr['st_size'] = 0
         else:
             resource = self._get_path(path)
@@ -428,11 +433,17 @@ class ClientFuse(fuse.Operations):
                 resource['document']['sha512']
                 if 'sha512' in resource['document'] else
                 '%s-%d-%s' % (
-                    resource['document']['_id'], resource['document']['size'],
+                    resource['document']['_id'], resource['document'].get('size', 0),
                     resource['document'].get('updated', resource['document']['created']))),
-            'size': resource['document']['size'],
+            'size': resource['document'].get('size', 0),
             'lock': threading.Lock(),
         }
+        if resource['document'].get('linkUrl'):
+            info['url'] = resource['document']['linkUrl']
+        if 'size' not in resource['document']:
+            with httpio.open(info['url']) as f:
+                f.seek(0, os.SEEK_END)
+                info['size'] = f.tell()
         with self.openFilesLock:
             fh = self.nextFH
             self.nextFH += 1
@@ -593,7 +604,10 @@ def get_girder_client(opts):
     gcopts['username'] = gcopts.get('username') or None
     gcopts['password'] = gcopts.get('password') or None
     girder_client.DEFAULT_PAGE_LIMIT = max(girder_client.DEFAULT_PAGE_LIMIT, 250)
-    return GirderClient(**gcopts)
+    client = GirderClient(**gcopts)
+    if opts.get('token'):
+        client.setToken(opts['token'])
+    return client
 
 
 def main(args=None):
@@ -613,10 +627,13 @@ def main(args=None):
         help='An API key, defaults to GIRDER_API_KEY environment variable.')
     parser.add_argument(
         '--username', '--user',
-        help='The Girder admin username.  If not specified, a prompt is given.')
+        help='The Girder username.  If not specified, a prompt is given.')
     parser.add_argument(
         '--password', '--pass', '--passwd', '--pw',
-        help='The Girder admin password.  If not specified, a prompt is given.')
+        help='The Girder password.  If not specified, a prompt is given.')
+    parser.add_argument(
+        '--token',
+        help='A Girder token to use instead of a username and password.')
     parser.add_argument(
         '--host', help='The Girder API host.  Default is localhost.')
     parser.add_argument(
@@ -663,9 +680,15 @@ def main(args=None):
         '--lazy', '-l', '-z', action='store_true', default=False,
         help='Lazy unmount.')
     parser.add_argument(
-        '--flatten', '-f', action='store_true', default=False,
+        '--flatten', action='store_true', default=False,
         help='Flatten single file items so that the item does not appear as a '
         'directory.')
+    parser.add_argument(
+        '--foreground', '-f', action='store_true', default=False,
+        help='Foreground operation (same as -o foreground).')
+    parser.add_argument(
+        '--debug', action='store_true', default=False,
+        help='Enable debug output (same as -o debug,foreground; implies -f).')
     parser.add_argument(
         '--version', '-V', action='version',
         version='%(prog)s {version}'.format(version=__version__))
@@ -682,6 +705,12 @@ def main(args=None):
     if args.unmount or args.lazy:
         result = unmount_client(args.path, args.lazy)
         sys.exit(result)
+    if args.debug:
+        if 'debug' not in (args.fuseOptions or '').split(','):
+            args.fuseOptions = ((args.fuseOptions + ',') if args.fuseOptions else '') + 'debug'
+        args.foreground = True
+    if args.foreground and 'foreground' not in (args.fuseOptions or '').split(','):
+        args.fuseOptions = ((args.fuseOptions + ',') if args.fuseOptions else '') + 'foreground'
     gc = get_girder_client(vars(args))
     mount_client(path=args.path, gc=gc, fuse_options=args.fuseOptions, flatten=args.flatten)
 
