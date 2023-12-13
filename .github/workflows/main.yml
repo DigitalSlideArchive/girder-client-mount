@@ -17,7 +17,7 @@ jobs:
       - uses: awalsh128/cache-apt-pkgs-action@latest
         with:
           packages: fuse
-          version: 1.0
+          version: 1.1
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
