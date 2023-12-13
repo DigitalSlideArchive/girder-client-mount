@@ -164,7 +164,7 @@ class ClientFuse(fuse.Operations):
             path = path[:-1]
         # If asked about a file in top level directory or the top directory,
         # return that it doesn't exist.  Other methods should handle '',
-        # '/user', and 'collection' before calling this method.
+        # 'user', and 'collection' before calling this method.
         if '/' not in path.rstrip('/')[1:]:
             raise fuse.FuseOSError(errno.ENOENT)
         try:
@@ -671,7 +671,7 @@ def main(args=None):
         'diskcache_size_limit (in bytes) are the most common.  The directory '
         'defaults to ~/.cache/girder-client-mount.  stat_cache_ttl specifies '
         'how long in seconds attributes are cached for girder documents.  A '
-        'longer time reduces network access but could result is stale '
+        'longer time reduces network access but could result in stale '
         'permissions or miss updates.')
     parser.add_argument(
         '--unmount', '--umount', '-u', action='store_true', default=False,
