@@ -34,10 +34,11 @@ setup(
         'License :: OSI Approved :: Apache Software License',
         'Natural Language :: English',
         'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.6',
-        'Programming Language :: Python :: 3.7',
         'Programming Language :: Python :: 3.8',
         'Programming Language :: Python :: 3.9',
+        'Programming Language :: Python :: 3.10',
+        'Programming Language :: Python :: 3.11',
+        'Programming Language :: Python :: 3.12',
     ],
     description='Mount a girder server via fuse',
     install_requires=[
@@ -56,7 +57,7 @@ setup(
     packages=find_packages(exclude=['test', 'test.*']),
     url='https://github.com/manthey/girder-client-mount',
     zip_safe=False,
-    python_requires='>=3.6',
+    python_requires='>=3.8',
     entry_points={
         'console_scripts': [
             'girder-client-mount = girder_client_mount:main',

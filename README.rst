@@ -7,7 +7,7 @@ Mount a Girder server as a local FUSE mount.
 Installation
 ------------
 
-You must have Python >= 3.6 and libfuse installed.
+You must have Python >= 3.8 and libfuse installed.
 
 Use pip ::
 
