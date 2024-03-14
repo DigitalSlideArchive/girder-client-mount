@@ -112,7 +112,7 @@ class ClientFuse(fuse.Operations):
         for key in list((cacheopts or {}).keys()):
             if key.startswith('diskcache'):
                 value = cacheopts.pop(key)
-                if value.strip().isdigit():
+                if str(value).strip().isdigit():
                     value = int(value)
                 key = key[len('diskcache'):].lstrip('_')
                 use = True if use is None else use
