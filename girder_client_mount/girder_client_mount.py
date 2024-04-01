@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 import argparse
 import errno
 import functools
@@ -30,6 +31,10 @@ logger = logging.getLogger(__name__)
 
 # See http://docs.python.org/3.3/howto/logging.html#configuring-logging-for-a-library
 logging.getLogger(__name__).addHandler(logging.NullHandler())
+
+
+def hashkey_first(funcname, *args, **kwargs):
+    return (funcname, args[1])
 
 
 class ClientFuse(fuse.Operations):
@@ -82,6 +87,14 @@ class ClientFuse(fuse.Operations):
         self._allow_other = 'allow_other' in options
         self.cache = cachetools.TTLCache(maxsize=10000, ttl=int(options.pop('stat_cache_ttl', 1)))
         self.diskcache = None
+        self._mount_stats = {
+            'open': 0,
+            'read': 0,
+            'release': 0,
+            'dir': 0,
+            'bytesread': 0,
+            'pathlookups': 0,
+        }
         self._configure_disk_cache(options)
 
     def _configure_disk_cache(self, cacheopts):
@@ -122,7 +135,10 @@ class ClientFuse(fuse.Operations):
             chunk = int(options.pop('chunk', 128 * 1024))
             self.diskcache = {
                 'chunk': chunk,
-                'cache': diskcache.Cache(**options)
+                'cache': diskcache.Cache(**options),
+                'hits': 0,
+                'miss': 0,
+                'bytesread': 0,
             }
 
     def __call__(self, op, path, *args, **kwargs):
@@ -152,7 +168,7 @@ class ClientFuse(fuse.Operations):
                 logger.debug('<- %s (length %d) %r', op, len(ret), ret[:16])
 
     @cachetools.cachedmethod(lambda self: self.cache, key=functools.partial(
-        cachetools.keys.hashkey, '_get_path'))
+        hashkey_first, '_get_path'))
     def _get_path(self, path):
         """
         Given a fuse path, return the associated resource.
@@ -160,6 +176,7 @@ class ClientFuse(fuse.Operations):
         :param path: path within the fuse.
         :returns: a Girder resource dictionary.
         """
+        self._mount_stats['pathlookups'] += 1
         if path.endswith('/*'):
             path = path[:-1]
         # If asked about a file in top level directory or the top directory,
@@ -259,6 +276,20 @@ class ClientFuse(fuse.Operations):
         entries = [entry for entry in entries if '/' not in entry]
         return entries
 
+    def _mount_stats_repr(self):
+        import json
+
+        curstats = self._mount_stats.copy()
+        curstats['openfiles'] = {}
+        for fh in self.openFiles:
+            try:
+                curstats['openfiles'][fh] = self.openFiles[fh]['path']
+            except Exception:
+                pass
+        if self.diskcache:
+            curstats['diskcache'] = {k: v for k, v in self.diskcache.items() if k != 'cache'}
+        return (json.dumps(curstats, indent=2) + '\n').encode()
+
     # We don't handle extended attributes or ioctl.
     getxattr = None
     listxattr = None
@@ -300,7 +331,7 @@ class ClientFuse(fuse.Operations):
         return 0
 
     @cachetools.cachedmethod(lambda self: self.cache, key=functools.partial(
-        cachetools.keys.hashkey, 'getattr'))
+        hashkey_first, 'getattr'))
     def getattr(self, path, fh=None):
         """
         Get the attributes dictionary of a path.
@@ -314,6 +345,13 @@ class ClientFuse(fuse.Operations):
             attr = self._defaultStat.copy()
             attr['st_mode'] = (0o555 if self._allow_other else 0o500) | stat.S_IFDIR
             attr['st_size'] = 0
+        elif path.rstrip('/') == '/stats':
+            attr = self._defaultStat.copy()
+            attr['st_ino'] = -1
+            attr['st_nlink'] = 1
+            attr['st_ctime'] = attr['st_mtime'] = int(time.time() * 1e9)
+            attr['st_mode'] = 0o400 | stat.S_IFREG
+            attr['st_size'] = len(self._mount_stats_repr())
         else:
             resource = self._get_path(path)
             attr = self._stat(resource['document'], resource['model'])
@@ -334,10 +372,14 @@ class ClientFuse(fuse.Operations):
         :param fh: an open file handle.
         :returns: a block of up to <size> bytes.
         """
+        if path.rstrip('/') == '/stats':
+            data = self._mount_stats_repr()
+            return data[offset:offset + size]
         with self.openFilesLock:
             if fh not in self.openFiles:
                 raise fuse.FuseOSError(errno.EBADF)
             info = self.openFiles[fh]
+        self._mount_stats['read'] += 1
         if self.diskcache:
             result = b''
             for idx in range(
@@ -348,6 +390,8 @@ class ClientFuse(fuse.Operations):
                 key = '%s-%d-%d' % (info['hash'], idxoffset, idxlen)
                 try:
                     data = self.diskcache['cache'].get(key, None, read=True)
+                    if data is not None:
+                        self.diskcache['hits'] += 1
                 except Exception:
                     logger.exception('diskcache threw an exception in get')
                     data = None
@@ -358,6 +402,8 @@ class ClientFuse(fuse.Operations):
                         handle = info['handle']
                         handle.seek(idxoffset)
                         data = handle.read(idxlen)
+                        self.diskcache['miss'] += 1
+                        self.diskcache['bytesread'] += len(data)
                     try:
                         self.diskcache['cache'][key] = data
                     except Exception:
@@ -367,12 +413,14 @@ class ClientFuse(fuse.Operations):
                 else:
                     data.seek(max(0, offset - idxoffset))
                     result += data.read(size - len(result))
+            self._mount_stats['bytesread'] += len(result)
             return result
         with info['lock']:
             if 'handle' not in info:
                 info['handle'] = httpio.open(info['url'], allow_redirects=True)
             handle = info['handle']
             handle.seek(offset)
+            self._mount_stats['bytesread'] += size
             return handle.read(size)
 
     def readdir(self, path, fh):
@@ -384,10 +432,11 @@ class ClientFuse(fuse.Operations):
             specified.
         :returns: a list of names.  This always includes . and ..
         """
+        self._mount_stats['dir'] += 1
         path = path.rstrip('/')
         result = ['.', '..']
         if path == '':
-            result.extend(['collection', 'user'])
+            result.extend(['collection', 'user', 'stats'])
         elif path in ('/user', '/collection'):
             try:
                 if path == '/user':
@@ -414,6 +463,10 @@ class ClientFuse(fuse.Operations):
             read only.
         :returns: a file descriptor.
         """
+        if path.rstrip('/') == '/stats':
+            fh = self.nextFH
+            self.nextFH += 1
+            return fh
         resource = self._get_path(path)
         if resource['model'] == 'item' and self.flatten:
             files = list(self.gc.listFile(resource['document']['_id'], limit=2))
@@ -448,6 +501,7 @@ class ClientFuse(fuse.Operations):
             fh = self.nextFH
             self.nextFH += 1
             self.openFiles[fh] = info
+            self._mount_stats['open'] += 1
         return fh
 
     def release(self, path, fh):
@@ -465,6 +519,7 @@ class ClientFuse(fuse.Operations):
                         self.openFiles[fh]['handle'].close()
                         del self.openFiles[fh]['handle']
                     del self.openFiles[fh]
+                    self._mount_stats['release'] += 1
             else:
                 return super().release(path, fh)
         return 0
