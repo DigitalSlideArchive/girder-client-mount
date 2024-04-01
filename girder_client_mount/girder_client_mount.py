@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
 
-def hashkey_first(funcname, *args, **kwargs):
+def _hashkey_first(funcname, *args, **kwargs):
     return (funcname, args[1])
 
 
@@ -170,7 +170,7 @@ class ClientFuse(fuse.Operations):
                 logger.debug('<- %s (length %d) %r', op, len(ret), ret[:16])
 
     @cachetools.cachedmethod(lambda self: self.cache, key=functools.partial(
-        hashkey_first, '_get_path'))
+        _hashkey_first, '_get_path'))
     def _get_path(self, path):
         """
         Given a fuse path, return the associated resource.
@@ -333,7 +333,7 @@ class ClientFuse(fuse.Operations):
         return 0
 
     @cachetools.cachedmethod(lambda self: self.cache, key=functools.partial(
-        hashkey_first, 'getattr'))
+        _hashkey_first, 'getattr'))
     def getattr(self, path, fh=None):
         """
         Get the attributes dictionary of a path.
