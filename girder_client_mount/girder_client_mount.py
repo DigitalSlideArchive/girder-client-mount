@@ -4,6 +4,7 @@ import argparse
 import errno
 import functools
 import hashlib
+import importlib.metadata
 import logging
 import os
 import pathlib
@@ -19,11 +20,10 @@ import girder_client
 import girder_client.cli
 import httpio
 import requests
-from pkg_resources import DistributionNotFound, get_distribution
 
 try:
-    __version__ = get_distribution(__name__.split('.')[0]).version
-except DistributionNotFound:
+    __version__ = importlib.metadata.version(__name__)
+except importlib.metadata.PackageNotFoundError:
     # package is not installed
     __version__ = 'local'
 
