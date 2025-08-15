@@ -2,10 +2,10 @@ name: Build and test
 on:
   pull_request:
     branches:
-      - master
+      - main
   push:
-  #  branches:
-  #    - master
+    branches:
+      - main
   create:
   schedule:
     - cron: "0 4 * * 2"
